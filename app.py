@@ -7,6 +7,7 @@ from core.conflict_engine import ConflictEngine
 from core.consequence import ConsequenceEngine
 from core.decision_engine import DecisionEngine
 from core.mission_graph import MissionGraph
+from core.snowflake_service import save_mission_event
 from core.change_engine import ChangeEngine
 
 
@@ -41,6 +42,9 @@ if "previous_mission" not in st.session_state:
 
 if "last_change_info" not in st.session_state:
     st.session_state.last_change_info = None
+
+if "last_snowflake_event_key" not in st.session_state:
+    st.session_state.last_snowflake_event_key = None
 
 
 # ---------------------------------------------------------
@@ -102,6 +106,7 @@ if st.sidebar.button(
         )
 
         st.session_state.last_change_info = None
+        st.session_state.last_snowflake_event_key = None
 
         st.rerun()
 
@@ -225,6 +230,7 @@ if current_tasks:
         change_info = refresh_change_detection()
 
         st.session_state.last_change_info = change_info
+        st.session_state.last_snowflake_event_key = None
 
         st.rerun()
 
@@ -268,6 +274,8 @@ if st.sidebar.button(
         )
 
         refresh_change_detection()
+
+        st.session_state.last_snowflake_event_key = None
 
         st.rerun()
 
@@ -433,8 +441,7 @@ pending_tasks = [
 ]
 
 active_commitments = [
-    commitment
-    for commitment in commitments
+    commitment for commitment in commitments
     if commitment.get("status") == "active"
 ]
 
@@ -560,6 +567,104 @@ if recommended_focus:
     st.write(
         f"Recommended focus: **{recommended_focus}**"
     )
+
+
+# ---------------------------------------------------------
+# SNOWFLAKE EVENT LOG
+# ---------------------------------------------------------
+
+if recommended_focus:
+
+    # Find the recommended task so Snowflake stores
+    # meaningful task information instead of placeholders.
+    recommended_task = next(
+        (
+            task for task in tasks
+            if task.get("title") == recommended_focus
+        ),
+        None
+    )
+
+    if recommended_task:
+
+        snowflake_duration = int(
+            recommended_task.get(
+                "duration_minutes",
+                0
+            )
+        )
+
+        snowflake_priority = str(
+            recommended_task.get(
+                "priority",
+                "recommended"
+            )
+        ).upper()
+
+        snowflake_deadline = (
+            recommended_task.get("deadline")
+        )
+
+    else:
+
+        snowflake_duration = 0
+        snowflake_priority = "RECOMMENDED"
+        snowflake_deadline = None
+
+    snowflake_event_key = (
+        mission.get("name", ""),
+        mission.get("objective", ""),
+        recommended_focus,
+        available_minutes,
+        decision.get("decision", ""),
+        decision.get("reason", "")
+    )
+
+    # Streamlit reruns the script frequently.
+    # This prevents the exact same decision from
+    # being inserted repeatedly during one state.
+    if (
+        st.session_state.last_snowflake_event_key
+        != snowflake_event_key
+    ):
+
+        snowflake_saved, snowflake_message = save_mission_event(
+            mission_name=mission.get(
+                "name",
+                "Unnamed Mission"
+            ),
+            objective=mission.get(
+                "objective",
+                ""
+            ),
+            task_name=recommended_focus,
+            task_duration_minutes=snowflake_duration,
+            task_priority=snowflake_priority,
+            task_deadline=snowflake_deadline,
+            available_minutes=available_minutes,
+            event_type="ADAPTIVE_DECISION",
+            recommendation=decision.get(
+                "reason",
+                ""
+            ),
+        )
+
+        if snowflake_saved:
+
+            st.session_state.last_snowflake_event_key = (
+                snowflake_event_key
+            )
+
+            st.success(
+                "☁️ Decision logged to Snowflake"
+            )
+
+        else:
+
+            st.warning(
+                f"Snowflake logging skipped: "
+                f"{snowflake_message}"
+            )
 
 
 # ---------------------------------------------------------
